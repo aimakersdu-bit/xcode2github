@@ -10,7 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.io.IOException;
 import java.util.Collections;
 
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -30,8 +30,8 @@ public class GitHubControllerTest {
     public void testGetFileContent() throws Exception {
         String path = "README.md";
         // listFiles should throw IOException to indicate it's not a directory
-        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
-        given(gitService.getFileContent(path)).willReturn("Hello World".getBytes());
+        given(gitService.listFiles(any(), eq(path))).willThrow(new IOException("Path is not a directory"));
+        given(gitService.getFileContent(any(), eq(path))).willReturn("Hello World".getBytes());
 
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
@@ -49,15 +49,26 @@ public class GitHubControllerTest {
         entry.setType("dir");
         entry.setSize(0);
 
-        // For root path, the pattern match extraction results in empty string usually,
-        // but let's test a sub-directory "src" to be safe and consistent with mock
         String path = "src";
 
-        given(gitService.listFiles(path)).willReturn(Collections.singletonList(entry));
+        given(gitService.listFiles(any(), eq(path))).willReturn(Collections.singletonList(entry));
 
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
                 .andExpect(jsonPath("$[0].type").value("dir"));
+    }
+
+    @Test
+    public void testGetContentWithRef() throws Exception {
+        String path = "README.md";
+        String ref = "dev";
+        given(gitService.listFiles(eq(ref), eq(path))).willThrow(new IOException("Path is not a directory"));
+        given(gitService.getFileContent(eq(ref), eq(path))).willReturn("Dev Content".getBytes());
+
+        mockMvc.perform(get("/repos/ah/futian/contents/" + path).param("ref", ref))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("README.md"))
+                .andExpect(jsonPath("$.content").exists());
     }
 }
