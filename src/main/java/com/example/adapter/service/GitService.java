@@ -2,18 +2,20 @@ package com.example.adapter.service;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.*;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Base64;
-import java.util.stream.Collectors;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class GitService {
@@ -32,20 +34,19 @@ public class GitService {
 
     private Git git;
 
-    public void initRepo() throws IOException, GitAPIException {
+    public synchronized void initRepo() throws IOException, GitAPIException {
         File repoDir = new File(localPath);
         if (repoDir.exists() && new File(repoDir, ".git").exists()) {
             try {
                 git = Git.open(repoDir);
                 System.out.println("Opened existing repository.");
-                // Pull changes
-                git.pull()
+                // Fetch changes to update refs (not just pull, which merges)
+                git.fetch()
                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
                    .call();
-                System.out.println("Pulled latest changes.");
+                System.out.println("Fetched latest changes.");
             } catch (Exception e) {
-                // If opening fails, maybe it's corrupted, delete and re-clone
-                System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
+                System.err.println("Failed to open/fetch repo, re-cloning: " + e.getMessage());
                 deleteDirectory(repoDir);
                 cloneRepo(repoDir);
             }
@@ -82,48 +83,141 @@ public class GitService {
         file.delete();
     }
 
-    public byte[] getFileContent(String path) throws IOException {
-        Path root = Path.of(localPath).normalize();
-        Path filePath = root.resolve(path).normalize();
-        if (!filePath.startsWith(root)) {
-             throw new IOException("Invalid path: " + path);
+    public byte[] getFileContent(String ref, String path) throws IOException {
+        if (git == null) throw new IOException("Repository not initialized");
+        Repository repository = git.getRepository();
+        ObjectId commitId = resolveRef(ref);
+
+        try (RevWalk revWalk = new RevWalk(repository)) {
+            RevCommit commit = revWalk.parseCommit(commitId);
+            RevTree tree = commit.getTree();
+
+            try (TreeWalk treeWalk = new TreeWalk(repository)) {
+                treeWalk.addTree(tree);
+                treeWalk.setRecursive(true);
+                treeWalk.setFilter(PathFilter.create(path));
+
+                if (!treeWalk.next()) {
+                    throw new IOException("File not found: " + path + " in " + ref);
+                }
+
+                ObjectId objectId = treeWalk.getObjectId(0);
+                ObjectLoader loader = repository.open(objectId);
+                return loader.getBytes();
+            }
         }
-        if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
-            throw new IOException("File not found: " + path);
-        }
-        return Files.readAllBytes(filePath);
     }
 
-    public List<FileEntry> listFiles(String path) throws IOException {
-        Path root = Path.of(localPath).normalize();
-        Path dirPath = root.resolve(path).normalize();
-        if (!dirPath.startsWith(root)) {
-             throw new IOException("Invalid path: " + path);
-        }
-        if (!Files.exists(dirPath) || !Files.isDirectory(dirPath)) {
-             throw new IOException("Directory not found: " + path);
-        }
+    public List<FileEntry> listFiles(String ref, String path) throws IOException {
+        if (git == null) throw new IOException("Repository not initialized");
+        Repository repository = git.getRepository();
+        ObjectId commitId = resolveRef(ref);
 
         List<FileEntry> entries = new ArrayList<>();
-        try (var stream = Files.list(dirPath)) {
-            stream.forEach(p -> {
-                FileEntry entry = new FileEntry();
-                entry.setName(p.getFileName().toString());
-                entry.setPath(path.isEmpty() ? p.getFileName().toString() : path + "/" + p.getFileName().toString());
-                entry.setType(Files.isDirectory(p) ? "dir" : "file");
-                entry.setSize(tryGetSize(p));
-                entries.add(entry);
-            });
+
+        try (RevWalk revWalk = new RevWalk(repository)) {
+            RevCommit commit = revWalk.parseCommit(commitId);
+            RevTree tree = commit.getTree();
+
+            try (TreeWalk treeWalk = new TreeWalk(repository)) {
+                treeWalk.addTree(tree);
+                treeWalk.setRecursive(false);
+
+                if (path != null && !path.isEmpty()) {
+                     // We need to navigate to the path first
+                     // But TreeWalk without recursive needs to manually find the tree
+                     // Simpler way: filter by PathFilterGroup.createFromStrings(path) but that might be recursive
+
+                     // Let's walk until we find the path
+                    PathFilter filter = PathFilter.create(path);
+                    // treeWalk.setFilter(filter); // This finds the ITEM at path.
+
+                    // If path is "a/b", we want children of "a/b".
+                    // The standard TreeWalk is top-down.
+
+                    while (treeWalk.next()) {
+                        if (filter.include(treeWalk)) {
+                            if (treeWalk.isSubtree()) {
+                                treeWalk.enterSubtree();
+                                break; // found the dir, entered it, now iterate
+                            } else {
+                                // It's a file, not a dir, cannot list children
+                                throw new IOException("Path is not a directory: " + path);
+                            }
+                        }
+                        if (treeWalk.isSubtree()) {
+                             // If path is "a/b", and we are at "a", we need to enter.
+                             // But wait, PathFilter includes "a" if it is a prefix of "a/b"
+                             // Let's rely on PathFilter.
+                             // Actually, PathFilter.include returns true if the current entry is on the path to the target.
+                             // But we need to be careful not to enter wrong subtrees.
+                             // PathFilter handles this.
+                             treeWalk.enterSubtree();
+                        }
+                    }
+
+                    // If loop finished without breaking, we didn't find the path or it wasn't a subtree we could enter
+                    // But wait, if we broke, we are now INSIDE the directory.
+                    // However, we need to verify we are actually in the directory we wanted.
+                    // This manual walking is error prone.
+
+                    // Better approach for navigating to a subtree:
+                    // Use TreeWalk.forPath, but that gives us the item itself.
+                    // If it is a tree, we can create a new TreeWalk with that tree.
+
+                    // Reset
+                }
+            }
+
+            // Re-approach using separate logic for finding the tree
+            ObjectId treeId = tree.getId();
+            if (path != null && !path.isEmpty()) {
+                 try (TreeWalk walk = TreeWalk.forPath(repository, path, tree)) {
+                     if (walk == null) {
+                         throw new IOException("Path not found: " + path);
+                     }
+                     if (!walk.isSubtree()) {
+                         throw new IOException("Path is not a directory: " + path);
+                     }
+                     treeId = walk.getObjectId(0);
+                 }
+            }
+
+            try (TreeWalk treeWalk = new TreeWalk(repository)) {
+                treeWalk.addTree(treeId);
+                treeWalk.setRecursive(false);
+                while (treeWalk.next()) {
+                    FileEntry entry = new FileEntry();
+                    entry.setName(treeWalk.getNameString());
+                    String entryPath = path != null && !path.isEmpty() ? path + "/" + treeWalk.getNameString() : treeWalk.getNameString();
+                    entry.setPath(entryPath);
+                    entry.setType(treeWalk.isSubtree() ? "dir" : "file");
+                    // Getting size is expensive (requires loading object), set to 0 or try to get if easy
+                    // ObjectLoader loader = repository.open(treeWalk.getObjectId(0));
+                    // entry.setSize(loader.getSize());
+                    entry.setSize(0); // Optional for directories usually
+                    entries.add(entry);
+                }
+            }
         }
         return entries;
     }
 
-    private long tryGetSize(Path p) {
-        try {
-            return Files.size(p);
-        } catch (IOException e) {
-            return 0;
+    private ObjectId resolveRef(String ref) throws IOException {
+        if (ref == null || ref.isEmpty()) ref = "master"; // Default to master
+        ObjectId id = git.getRepository().resolve(ref);
+        if (id == null) {
+             // Try assuming it's a branch name that needs refs/heads/
+             id = git.getRepository().resolve("refs/heads/" + ref);
         }
+        if (id == null) {
+             // Try assuming it's a tag
+             id = git.getRepository().resolve("refs/tags/" + ref);
+        }
+        if (id == null) {
+            throw new IOException("Ref not found: " + ref);
+        }
+        return id;
     }
 
     public static class FileEntry {
