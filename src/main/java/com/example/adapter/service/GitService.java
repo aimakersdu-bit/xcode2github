@@ -47,7 +47,12 @@ public class GitService {
                 // If opening fails, maybe it's corrupted, delete and re-clone
                 System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
                 deleteDirectory(repoDir);
-                cloneRepo(repoDir);
+                try {
+                    cloneRepo(repoDir);
+                } catch (GitAPIException cloneException) {
+                    System.err.println("Re-clone failed: " + cloneException.getMessage());
+                    throw cloneException;
+                }
             }
         } else {
             cloneRepo(repoDir);
