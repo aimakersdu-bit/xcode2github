@@ -30,8 +30,10 @@ public class GitHubControllerTest {
     public void testGetFileContent() throws Exception {
         String path = "README.md";
         // listFiles should throw IOException to indicate it's not a directory
-        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
-        given(gitService.getFileContent(path)).willReturn("Hello World".getBytes());
+        given(gitService.listFiles(eq(path), anyString())).willThrow(new IOException("Path is not a directory"));
+        given(gitService.listFiles(eq(path), eq(null))).willThrow(new IOException("Path is not a directory"));
+        given(gitService.getFileContent(eq(path), anyString())).willReturn("Hello World".getBytes());
+        given(gitService.getFileContent(eq(path), eq(null))).willReturn("Hello World".getBytes());
 
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
@@ -49,11 +51,10 @@ public class GitHubControllerTest {
         entry.setType("dir");
         entry.setSize(0);
 
-        // For root path, the pattern match extraction results in empty string usually,
-        // but let's test a sub-directory "src" to be safe and consistent with mock
         String path = "src";
 
-        given(gitService.listFiles(path)).willReturn(Collections.singletonList(entry));
+        given(gitService.listFiles(eq(path), anyString())).willReturn(Collections.singletonList(entry));
+        given(gitService.listFiles(eq(path), eq(null))).willReturn(Collections.singletonList(entry));
 
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
