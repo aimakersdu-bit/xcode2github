@@ -10,10 +10,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
-import java.util.stream.Collectors;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class GitService {
@@ -30,22 +28,26 @@ public class GitService {
     @Value("${ezone.repo.local-path}")
     private String localPath;
 
+    @Value("${ezone.repo.ssl-verify:true}")
+    private boolean sslVerify;
+
     private Git git;
 
-    public void initRepo() throws IOException, GitAPIException {
+    public synchronized void initRepo() throws IOException, GitAPIException {
         File repoDir = new File(localPath);
         if (repoDir.exists() && new File(repoDir, ".git").exists()) {
             try {
-                git = Git.open(repoDir);
+                // Do not use try-with-resources here as we want to keep the git instance open
+                this.git = Git.open(repoDir);
+                configureGit(git);
                 System.out.println("Opened existing repository.");
-                // Pull changes
-                git.pull()
-                   .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
-                   .call();
-                System.out.println("Pulled latest changes.");
+                pull();
             } catch (Exception e) {
-                // If opening fails, maybe it's corrupted, delete and re-clone
                 System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
+                if (this.git != null) {
+                    this.git.close();
+                    this.git = null;
+                }
                 deleteDirectory(repoDir);
                 cloneRepo(repoDir);
             }
@@ -54,7 +56,18 @@ public class GitService {
         }
     }
 
-    private void cloneRepo(File repoDir) throws GitAPIException {
+    private void configureGit(Git git) {
+         if (!sslVerify) {
+             git.getRepository().getConfig().setBoolean("http", null, "sslVerify", false);
+             try {
+                 git.getRepository().getConfig().save();
+             } catch (IOException e) {
+                 e.printStackTrace();
+             }
+         }
+    }
+
+    private synchronized void cloneRepo(File repoDir) throws GitAPIException {
         if (!repoDir.exists()) {
             repoDir.mkdirs();
         }
@@ -65,11 +78,22 @@ public class GitService {
                     .setDirectory(repoDir)
                     .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
                     .call();
+            configureGit(git);
             System.out.println("Repository cloned.");
         } catch (GitAPIException e) {
             System.err.println("Failed to clone repository: " + e.getMessage());
             throw e;
         }
+    }
+
+    public synchronized void pull() throws GitAPIException {
+        if (git == null) {
+            throw new IllegalStateException("Git repository not initialized");
+        }
+        git.pull()
+           .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
+           .call();
+        System.out.println("Pulled latest changes.");
     }
 
     private void deleteDirectory(File file) {
@@ -92,6 +116,15 @@ public class GitService {
             throw new IOException("File not found: " + path);
         }
         return Files.readAllBytes(filePath);
+    }
+
+    public FileType getFileType(String path) {
+        Path root = Path.of(localPath).normalize();
+        Path p = root.resolve(path).normalize();
+        if (!p.startsWith(root)) return FileType.NONE;
+        if (!Files.exists(p)) return FileType.NONE;
+        if (Files.isDirectory(p)) return FileType.DIRECTORY;
+        return FileType.FILE;
     }
 
     public List<FileEntry> listFiles(String path) throws IOException {
@@ -140,5 +173,9 @@ public class GitService {
         public void setType(String type) { this.type = type; }
         public long getSize() { return size; }
         public void setSize(long size) { this.size = size; }
+    }
+
+    public enum FileType {
+        FILE, DIRECTORY, NONE
     }
 }

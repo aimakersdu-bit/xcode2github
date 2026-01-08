@@ -7,12 +7,11 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.io.IOException;
 import java.util.Collections;
+import java.util.List;
 
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -27,37 +26,35 @@ public class GitHubControllerTest {
     private GitService gitService;
 
     @Test
-    public void testGetFileContent() throws Exception {
-        String path = "README.md";
-        // listFiles should throw IOException to indicate it's not a directory
-        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
-        given(gitService.getFileContent(path)).willReturn("Hello World".getBytes());
-
-        mockMvc.perform(get("/repos/ah/futian/contents/" + path))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.name").value("README.md"))
-                .andExpect(jsonPath("$.type").value("file"))
-                .andExpect(jsonPath("$.content").exists())
-                .andExpect(jsonPath("$._links.self").exists());
-    }
-
-    @Test
-    public void testGetDirectoryContent() throws Exception {
+    public void testGetContents_Directory() throws Exception {
         GitService.FileEntry entry = new GitService.FileEntry();
-        entry.setName("src");
-        entry.setPath("src");
+        entry.setName("template");
+        entry.setPath("src/main/java/com/ezone/devops/ezcode/template");
         entry.setType("dir");
         entry.setSize(0);
 
-        // For root path, the pattern match extraction results in empty string usually,
-        // but let's test a sub-directory "src" to be safe and consistent with mock
-        String path = "src";
+        when(gitService.getFileType("src/main/java/com/ezone/devops/ezcode/template")).thenReturn(GitService.FileType.DIRECTORY);
+        when(gitService.listFiles("src/main/java/com/ezone/devops/ezcode/template")).thenReturn(List.of(entry));
 
-        given(gitService.listFiles(path)).willReturn(Collections.singletonList(entry));
-
-        mockMvc.perform(get("/repos/ah/futian/contents/" + path))
+        mockMvc.perform(get("/repos/ah/futian/contents/src/main/java/com/ezone/devops/ezcode/template"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].name").value("src"))
+                .andExpect(jsonPath("$[0].name").value("template"))
                 .andExpect(jsonPath("$[0].type").value("dir"));
+    }
+
+    @Test
+    public void testGetContents_File() throws Exception {
+        String filePath = "src/main/java/Test.java";
+        String content = "public class Test {}";
+        byte[] contentBytes = content.getBytes();
+
+        when(gitService.getFileType(filePath)).thenReturn(GitService.FileType.FILE);
+        when(gitService.getFileContent(filePath)).thenReturn(contentBytes);
+
+        mockMvc.perform(get("/repos/ah/futian/contents/" + filePath))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Test.java"))
+                .andExpect(jsonPath("$.type").value("file"))
+                .andExpect(jsonPath("$.content").exists());
     }
 }
