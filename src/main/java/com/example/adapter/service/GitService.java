@@ -3,17 +3,25 @@ package com.example.adapter.service;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
+import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Base64;
-import java.util.stream.Collectors;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class GitService {
@@ -44,7 +52,6 @@ public class GitService {
                    .call();
                 System.out.println("Pulled latest changes.");
             } catch (Exception e) {
-                // If opening fails, maybe it's corrupted, delete and re-clone
                 System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
                 deleteDirectory(repoDir);
                 cloneRepo(repoDir);
@@ -82,48 +89,109 @@ public class GitService {
         file.delete();
     }
 
-    public byte[] getFileContent(String path) throws IOException {
-        Path root = Path.of(localPath).normalize();
-        Path filePath = root.resolve(path).normalize();
-        if (!filePath.startsWith(root)) {
-             throw new IOException("Invalid path: " + path);
+    public byte[] getFileContent(String ref, String path) throws IOException {
+        if (git == null) {
+            throw new IllegalStateException("Repository not initialized");
         }
-        if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
-            throw new IOException("File not found: " + path);
+        Repository repository = git.getRepository();
+        ObjectId commitId = resolveRef(repository, ref);
+        if (commitId == null) {
+            throw new IllegalArgumentException("Reference not found: " + ref);
         }
-        return Files.readAllBytes(filePath);
+
+        try (RevWalk revWalk = new RevWalk(repository)) {
+            RevCommit commit = revWalk.parseCommit(commitId);
+            RevTree tree = commit.getTree();
+            try (TreeWalk treeWalk = new TreeWalk(repository)) {
+                treeWalk.addTree(tree);
+                treeWalk.setRecursive(true);
+                treeWalk.setFilter(PathFilter.create(path));
+                if (!treeWalk.next()) {
+                    throw new FileNotFoundException("File not found in " + ref + ": " + path);
+                }
+                ObjectId objectId = treeWalk.getObjectId(0);
+                ObjectLoader loader = repository.open(objectId);
+                return loader.getBytes();
+            }
+        }
     }
 
-    public List<FileEntry> listFiles(String path) throws IOException {
-        Path root = Path.of(localPath).normalize();
-        Path dirPath = root.resolve(path).normalize();
-        if (!dirPath.startsWith(root)) {
-             throw new IOException("Invalid path: " + path);
-        }
-        if (!Files.exists(dirPath) || !Files.isDirectory(dirPath)) {
-             throw new IOException("Directory not found: " + path);
+    // Deprecated: Uses local filesystem, kept for backward compatibility if needed, but updated to delegate
+    public byte[] getFileContent(String path) throws IOException {
+        return getFileContent("master", path);
+    }
+
+    public List<FileEntry> listFiles(String ref, String path) throws IOException {
+        if (git == null) throw new IllegalStateException("Repo not init");
+        Repository repository = git.getRepository();
+        ObjectId commitId = resolveRef(repository, ref);
+        if (commitId == null) {
+             // Fallback or error?
+             throw new IllegalArgumentException("Reference not found: " + ref);
         }
 
         List<FileEntry> entries = new ArrayList<>();
-        try (var stream = Files.list(dirPath)) {
-            stream.forEach(p -> {
-                FileEntry entry = new FileEntry();
-                entry.setName(p.getFileName().toString());
-                entry.setPath(path.isEmpty() ? p.getFileName().toString() : path + "/" + p.getFileName().toString());
-                entry.setType(Files.isDirectory(p) ? "dir" : "file");
-                entry.setSize(tryGetSize(p));
-                entries.add(entry);
-            });
+        try (RevWalk revWalk = new RevWalk(repository)) {
+            RevCommit commit = revWalk.parseCommit(commitId);
+            RevTree tree = commit.getTree();
+
+            if (path == null || path.isEmpty()) {
+                try (TreeWalk treeWalk = new TreeWalk(repository)) {
+                    treeWalk.addTree(tree);
+                    treeWalk.setRecursive(false);
+                    while (treeWalk.next()) {
+                        entries.add(createFileEntry(treeWalk));
+                    }
+                }
+            } else {
+                try (TreeWalk treeWalk = TreeWalk.forPath(repository, path, tree)) {
+                    if (treeWalk == null) {
+                        throw new FileNotFoundException("Path not found: " + path);
+                    }
+                    if (treeWalk.isSubtree()) {
+                        treeWalk.enterSubtree();
+                        while (treeWalk.next()) {
+                            entries.add(createFileEntry(treeWalk));
+                        }
+                    } else {
+                         throw new IOException("Path is not a directory: " + path);
+                    }
+                }
+            }
         }
         return entries;
     }
 
-    private long tryGetSize(Path p) {
-        try {
-            return Files.size(p);
-        } catch (IOException e) {
-            return 0;
+    // Deprecated: Uses filesystem
+    public List<FileEntry> listFiles(String path) throws IOException {
+        return listFiles("master", path);
+    }
+
+    private ObjectId resolveRef(Repository repo, String ref) throws IOException {
+        ObjectId oid = repo.resolve(ref);
+        if (oid == null && !ref.startsWith("origin/")) {
+            // Try origin/ref
+            oid = repo.resolve("origin/" + ref);
         }
+        return oid;
+    }
+
+    private FileEntry createFileEntry(TreeWalk treeWalk) {
+        FileEntry entry = new FileEntry();
+        entry.setName(treeWalk.getNameString());
+        entry.setPath(treeWalk.getPathString());
+        entry.setType(treeWalk.isSubtree() ? "dir" : "file");
+        if (!treeWalk.isSubtree()) {
+             try {
+                 long size = treeWalk.getObjectReader().getObjectSize(treeWalk.getObjectId(0), Constants.OBJ_BLOB);
+                 entry.setSize(size);
+             } catch (Exception e) {
+                 entry.setSize(0);
+             }
+        } else {
+            entry.setSize(0);
+        }
+        return entry;
     }
 
     public static class FileEntry {
