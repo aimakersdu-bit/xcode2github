@@ -10,10 +10,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
-import java.util.stream.Collectors;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class GitService {
@@ -43,9 +41,15 @@ public class GitService {
                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
                    .call();
                 System.out.println("Pulled latest changes.");
-            } catch (Exception e) {
-                // If opening fails, maybe it's corrupted, delete and re-clone
-                System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
+            } catch (GitAPIException e) {
+                // If pull fails (e.g. auth error, network), log and continue with local state
+                System.err.println("Failed to pull repo: " + e.getMessage());
+            } catch (IOException e) {
+                // If opening fails, maybe it's corrupted, then we might consider re-cloning
+                System.err.println("Failed to open repo, attempting to re-clone: " + e.getMessage());
+                try {
+                    git.close();
+                } catch (Exception ignore) {}
                 deleteDirectory(repoDir);
                 cloneRepo(repoDir);
             }
@@ -68,6 +72,7 @@ public class GitService {
             System.out.println("Repository cloned.");
         } catch (GitAPIException e) {
             System.err.println("Failed to clone repository: " + e.getMessage());
+            // Rethrow so the caller knows initialization failed completely
             throw e;
         }
     }
@@ -84,7 +89,10 @@ public class GitService {
 
     public byte[] getFileContent(String path) throws IOException {
         Path root = Path.of(localPath).normalize();
-        Path filePath = root.resolve(path).normalize();
+        // Remove leading slash if present to avoid absolute path resolution issues
+        String safePath = path.startsWith("/") ? path.substring(1) : path;
+        Path filePath = root.resolve(safePath).normalize();
+
         if (!filePath.startsWith(root)) {
              throw new IOException("Invalid path: " + path);
         }
@@ -96,7 +104,10 @@ public class GitService {
 
     public List<FileEntry> listFiles(String path) throws IOException {
         Path root = Path.of(localPath).normalize();
-        Path dirPath = root.resolve(path).normalize();
+        // Remove leading slash if present
+        String safePath = path.startsWith("/") ? path.substring(1) : path;
+        Path dirPath = root.resolve(safePath).normalize();
+
         if (!dirPath.startsWith(root)) {
              throw new IOException("Invalid path: " + path);
         }
@@ -109,7 +120,9 @@ public class GitService {
             stream.forEach(p -> {
                 FileEntry entry = new FileEntry();
                 entry.setName(p.getFileName().toString());
-                entry.setPath(path.isEmpty() ? p.getFileName().toString() : path + "/" + p.getFileName().toString());
+                // Construct relative path for the API response
+                String relativePath = safePath.isEmpty() ? p.getFileName().toString() : safePath + "/" + p.getFileName().toString();
+                entry.setPath(relativePath);
                 entry.setType(Files.isDirectory(p) ? "dir" : "file");
                 entry.setSize(tryGetSize(p));
                 entries.add(entry);

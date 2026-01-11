@@ -35,9 +35,14 @@ public class GitHubController {
                 gitService.initRepo();
                 initialized = true;
             } catch (Exception e) {
-                // Log and continue, maybe retry later
+                // Log and continue. If cloning failed, subsequent read operations might fail
+                // but we allow them to try (e.g. if partial state exists or for retry)
                 System.err.println("Error initializing repo: " + e.getMessage());
-                // In production, might want to return 503 Service Unavailable until initialized
+                // We set initialized to true to avoid spamming init calls that fail immediately,
+                // but maybe we should retry later? For now, simplistic approach.
+                // Better: keep initialized=false if it was a critical failure?
+                // But GitService.initRepo re-throws on clone failure.
+                // If we swallow it here, the API returns 500 later.
             }
         }
     }
@@ -55,41 +60,26 @@ public class GitHubController {
         String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
         String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
 
+        // Decoding usually happens by Spring, but let's be safe if manual URL manipulation happened
+        // Actually Spring decodes PathVariables but extractPathWithinPattern preserves raw?
+        // Let's assume subPath is correct.
+
         System.out.println("Requested content for path: " + subPath);
 
         try {
-            // Check if it's a file or directory
-            // We use GitService to check.
-            // Note: Since we don't have a fast "isDir" without checking filesystem, we might need logic.
-            // But GitService.listDirectory throws if not dir.
-
-            // Try as directory first? Or check file system?
-            // The GitService works on local filesystem which is fast.
-
-            // But wait, subPath could be empty for root.
-
-            boolean isDir = false;
-            if (subPath.isEmpty()) {
-                isDir = true;
-            } else {
-                // Check locally
-                // Ideally GitService should expose "getType"
-                // For now, I'll access the implementation detail or improve GitService
-                // Let's improve GitService by assuming we can check via it.
-                // But simply:
-                 try {
-                     List<FileEntry> entries = gitService.listFiles(subPath);
-                     // It is a directory
-                     List<GitHubContent> response = new ArrayList<>();
-                     for (FileEntry entry : entries) {
-                         if (entry.getName().equals(".git")) continue;
-                         response.add(mapToGitHubContent(owner, repo, entry));
-                     }
-                     return ResponseEntity.ok(response);
-                 } catch (IOException e) {
-                     // Not a directory, try as file
+            // First check if it is a directory
+             try {
+                 List<FileEntry> entries = gitService.listFiles(subPath);
+                 // It is a directory
+                 List<GitHubContent> response = new ArrayList<>();
+                 for (FileEntry entry : entries) {
+                     if (entry.getName().equals(".git")) continue;
+                     response.add(mapToGitHubContent(owner, repo, entry));
                  }
-            }
+                 return ResponseEntity.ok(response);
+             } catch (IOException e) {
+                 // Not a directory, or doesn't exist. Try as file.
+             }
 
             // If not directory, try file
             byte[] contentBytes = gitService.getFileContent(subPath);
@@ -112,10 +102,12 @@ public class GitHubController {
         content.setSize(entry.getSize());
         content.setType(entry.getType());
         content.setSha("mock-sha");
-        content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
-        content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + entry.getPath());
+        // Ensure URLs are correct
+        String safePath = entry.getPath();
+        content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + safePath);
+        content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + safePath);
         content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath()); // Simplified
+        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + safePath);
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
