@@ -30,8 +30,9 @@ public class GitHubControllerTest {
     public void testGetFileContent() throws Exception {
         String path = "README.md";
         // listFiles should throw IOException to indicate it's not a directory
-        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
-        given(gitService.getFileContent(path)).willReturn("Hello World".getBytes());
+        // Default ref is "master"
+        given(gitService.listFiles(path, "master")).willThrow(new IOException("Not a directory"));
+        given(gitService.getFileContent(path, "master")).willReturn("Hello World".getBytes());
 
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
@@ -53,7 +54,7 @@ public class GitHubControllerTest {
         // but let's test a sub-directory "src" to be safe and consistent with mock
         String path = "src";
 
-        given(gitService.listFiles(path)).willReturn(Collections.singletonList(entry));
+        given(gitService.listFiles(path, "master")).willReturn(Collections.singletonList(entry));
 
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
