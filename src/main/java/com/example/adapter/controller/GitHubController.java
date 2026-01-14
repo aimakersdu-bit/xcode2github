@@ -71,24 +71,24 @@ public class GitHubController {
             boolean isDir = false;
             if (subPath.isEmpty()) {
                 isDir = true;
-            } else {
-                // Check locally
-                // Ideally GitService should expose "getType"
-                // For now, I'll access the implementation detail or improve GitService
-                // Let's improve GitService by assuming we can check via it.
-                // But simply:
-                 try {
-                     List<FileEntry> entries = gitService.listFiles(subPath);
-                     // It is a directory
-                     List<GitHubContent> response = new ArrayList<>();
-                     for (FileEntry entry : entries) {
-                         if (entry.getName().equals(".git")) continue;
-                         response.add(mapToGitHubContent(owner, repo, entry));
-                     }
-                     return ResponseEntity.ok(response);
-                 } catch (IOException e) {
-                     // Not a directory, try as file
-                 }
+            }
+
+            // Try as directory
+            try {
+                // If subPath is empty (root), listFiles("") handles it.
+                // If subPath is a dir, listFiles returns list.
+                // If subPath is a file, listFiles throws IOException (based on GitService implementation checking isDirectory)
+                List<FileEntry> entries = gitService.listFiles(subPath);
+
+                // If we are here, it is a directory
+                List<GitHubContent> response = new ArrayList<>();
+                for (FileEntry entry : entries) {
+                    if (entry.getName().equals(".git")) continue;
+                    response.add(mapToGitHubContent(owner, repo, entry));
+                }
+                return ResponseEntity.ok(response);
+            } catch (IOException e) {
+                // Not a directory, try as file
             }
 
             // If not directory, try file
