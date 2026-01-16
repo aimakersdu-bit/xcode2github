@@ -42,6 +42,34 @@ public class GitHubController {
         }
     }
 
+    @GetMapping("/repos/{owner}/{repo}/raw/**")
+    public ResponseEntity<byte[]> getRawContent(
+            @PathVariable String owner,
+            @PathVariable String repo,
+            HttpServletRequest request) {
+
+        ensureInitialized();
+
+        // Extract the full path after /raw/
+        String path = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+        String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
+
+        System.out.println("Requested raw content for path: " + subPath);
+
+        try {
+            byte[] contentBytes = gitService.getFileContent(subPath);
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/octet-stream")
+                    .body(contentBytes);
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     @GetMapping("/repos/{owner}/{repo}/contents/**")
     public ResponseEntity<?> getContents(
             @PathVariable String owner,
@@ -115,7 +143,7 @@ public class GitHubController {
         content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
         content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + entry.getPath());
         content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath()); // Simplified
+        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/raw/" + entry.getPath());
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
@@ -141,7 +169,7 @@ public class GitHubController {
         content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
         content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + path);
         content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
+        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/raw/" + path);
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
