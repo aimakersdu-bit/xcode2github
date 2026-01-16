@@ -14,6 +14,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -59,5 +62,39 @@ public class GitHubControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
                 .andExpect(jsonPath("$[0].type").value("dir"));
+    }
+
+    @Test
+    public void testDownloadUrlIsRaw() throws Exception {
+        String path = "README.md";
+        String content = "Hello World";
+
+        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
+        given(gitService.getFileContent(path)).willReturn(content.getBytes());
+
+        // 1. Get content metadata
+        var result = mockMvc.perform(get("/repos/ah/futian/contents/" + path))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String responseBody = result.getResponse().getContentAsString();
+        String search = "\"download_url\":\"";
+        int start = responseBody.indexOf(search);
+        assertTrue(start > 0, "download_url not found in response");
+        start += search.length();
+        int end = responseBody.indexOf("\"", start);
+        String downloadUrl = responseBody.substring(start, end);
+
+        // 2. Fetch from download_url
+        String relativeUrl = downloadUrl.replace("http://localhost:8080", "");
+        var downloadResult = mockMvc.perform(get(relativeUrl))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String downloadContent = downloadResult.getResponse().getContentAsString();
+
+        // 3. Assert content is raw
+        assertEquals(content, downloadContent);
+        assertFalse(downloadContent.trim().startsWith("{"));
     }
 }
