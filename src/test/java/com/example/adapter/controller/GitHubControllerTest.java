@@ -13,9 +13,12 @@ import java.util.Collections;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 
 @WebMvcTest(GitHubController.class)
 public class GitHubControllerTest {
@@ -38,6 +41,7 @@ public class GitHubControllerTest {
                 .andExpect(jsonPath("$.name").value("README.md"))
                 .andExpect(jsonPath("$.type").value("file"))
                 .andExpect(jsonPath("$.content").exists())
+                .andExpect(jsonPath("$.download_url").value(containsString("/raw/README.md")))
                 .andExpect(jsonPath("$._links.self").exists());
     }
 
@@ -58,6 +62,19 @@ public class GitHubControllerTest {
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
-                .andExpect(jsonPath("$[0].type").value("dir"));
+                .andExpect(jsonPath("$[0].type").value("dir"))
+                .andExpect(jsonPath("$[0].download_url").value(nullValue()));
+    }
+
+    @Test
+    public void testGetRawFile() throws Exception {
+        String path = "README.md";
+        byte[] content = "Hello World".getBytes();
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        mockMvc.perform(get("/repos/ah/futian/raw/" + path))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/octet-stream"))
+                .andExpect(content().bytes(content));
     }
 }
