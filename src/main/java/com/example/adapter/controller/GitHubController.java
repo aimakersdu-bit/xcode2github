@@ -6,6 +6,7 @@ import com.example.adapter.service.GitService;
 import com.example.adapter.service.GitService.FileEntry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.util.AntPathMatcher;
@@ -104,6 +105,27 @@ public class GitHubController {
         }
     }
 
+    @GetMapping("/repos/{owner}/{repo}/raw/**")
+    public ResponseEntity<?> getRawContent(
+            @PathVariable String owner,
+            @PathVariable String repo,
+            HttpServletRequest request) {
+        ensureInitialized();
+
+        String path = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+        String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
+
+        try {
+            byte[] contentBytes = gitService.getFileContent(subPath);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .body(contentBytes);
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+    }
+
     // Helper to map directory entry
     private GitHubContent mapToGitHubContent(String owner, String repo, FileEntry entry) {
         GitHubContent content = new GitHubContent();
@@ -115,7 +137,12 @@ public class GitHubController {
         content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
         content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + entry.getPath());
         content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath()); // Simplified
+
+        if ("dir".equals(entry.getType())) {
+            content.setDownload_url(null);
+        } else {
+            content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/raw/" + entry.getPath());
+        }
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
@@ -141,7 +168,7 @@ public class GitHubController {
         content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
         content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + path);
         content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
+        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/raw/" + path);
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());

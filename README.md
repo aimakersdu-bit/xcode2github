@@ -40,6 +40,7 @@ Update `ezone.repo.username` and `ezone.repo.password` with valid credentials if
 The adapter exposes the following GitHub-compatible endpoints:
 
 - `GET /repos/{owner}/{repo}/contents/{path}`: Get file or directory content.
+- `GET /repos/{owner}/{repo}/raw/{path}`: Get raw file content.
 - `GET /repos/{owner}/{repo}/branches`: List branches (mocked).
 - `GET /user`: Get current user (mocked).
 
