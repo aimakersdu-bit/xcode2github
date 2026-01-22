@@ -16,6 +16,7 @@ import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.containsString;
 
 @WebMvcTest(GitHubController.class)
 public class GitHubControllerTest {
@@ -38,6 +39,7 @@ public class GitHubControllerTest {
                 .andExpect(jsonPath("$.name").value("README.md"))
                 .andExpect(jsonPath("$.type").value("file"))
                 .andExpect(jsonPath("$.content").exists())
+                .andExpect(jsonPath("$.download_url", containsString("/raw/")))
                 .andExpect(jsonPath("$._links.self").exists());
     }
 

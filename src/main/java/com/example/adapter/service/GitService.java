@@ -39,13 +39,17 @@ public class GitService {
                 git = Git.open(repoDir);
                 System.out.println("Opened existing repository.");
                 // Pull changes
-                git.pull()
-                   .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
-                   .call();
-                System.out.println("Pulled latest changes.");
+                try {
+                    git.pull()
+                       .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
+                       .call();
+                    System.out.println("Pulled latest changes.");
+                } catch (Exception e) {
+                    System.err.println("Failed to pull changes (continuing with existing): " + e.getMessage());
+                }
             } catch (Exception e) {
                 // If opening fails, maybe it's corrupted, delete and re-clone
-                System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
+                System.err.println("Failed to open repo, re-cloning: " + e.getMessage());
                 deleteDirectory(repoDir);
                 cloneRepo(repoDir);
             }
