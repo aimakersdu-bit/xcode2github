@@ -38,16 +38,21 @@ public class GitService {
             try {
                 git = Git.open(repoDir);
                 System.out.println("Opened existing repository.");
+            } catch (Exception e) {
+                System.err.println("Failed to open repo, re-cloning: " + e.getMessage());
+                deleteDirectory(repoDir);
+                cloneRepo(repoDir);
+                return;
+            }
+
+            try {
                 // Pull changes
                 git.pull()
                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
                    .call();
                 System.out.println("Pulled latest changes.");
             } catch (Exception e) {
-                // If opening fails, maybe it's corrupted, delete and re-clone
-                System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
-                deleteDirectory(repoDir);
-                cloneRepo(repoDir);
+                System.err.println("Failed to pull repo, continuing with local version: " + e.getMessage());
             }
         } else {
             cloneRepo(repoDir);
