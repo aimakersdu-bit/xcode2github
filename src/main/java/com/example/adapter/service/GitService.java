@@ -2,18 +2,18 @@ package com.example.adapter.service;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
-import java.util.stream.Collectors;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class GitService {
@@ -30,14 +30,20 @@ public class GitService {
     @Value("${ezone.repo.local-path}")
     private String localPath;
 
+    @Value("${ezone.repo.ssl-verify:true}")
+    private boolean sslVerify;
+
     private Git git;
 
-    public void initRepo() throws IOException, GitAPIException {
+    public void initRepo() throws IOException, GitAPIException, URISyntaxException {
         File repoDir = new File(localPath);
         if (repoDir.exists() && new File(repoDir, ".git").exists()) {
             try {
                 git = Git.open(repoDir);
                 System.out.println("Opened existing repository.");
+
+                configureSsl(git);
+
                 // Pull changes
                 git.pull()
                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
@@ -54,21 +60,46 @@ public class GitService {
         }
     }
 
-    private void cloneRepo(File repoDir) throws GitAPIException {
+    private void cloneRepo(File repoDir) throws GitAPIException, URISyntaxException, IOException {
         if (!repoDir.exists()) {
             repoDir.mkdirs();
         }
         System.out.println("Cloning repository from " + repoUrl);
+
+        // Initialize empty repo
+        git = Git.init().setDirectory(repoDir).call();
+
+        // Configure SSL
+        configureSsl(git);
+
+        // Add remote
+        git.remoteAdd()
+                .setName("origin")
+                .setUri(new URIish(repoUrl))
+                .call();
+
         try {
-            git = Git.cloneRepository()
-                    .setURI(repoUrl)
-                    .setDirectory(repoDir)
+            // Pull master from origin
+            // We assume master since the user URL indicates it, and it's a safe default for now.
+            // A more robust solution would fetch all and checkout HEAD, but JGit 'pull' is convenient.
+            git.pull()
+                    .setRemote("origin")
+                    .setRemoteBranchName("master")
                     .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
                     .call();
-            System.out.println("Repository cloned.");
+            System.out.println("Repository cloned (initialized and pulled).");
         } catch (GitAPIException e) {
-            System.err.println("Failed to clone repository: " + e.getMessage());
+            System.err.println("Failed to pull repository: " + e.getMessage());
             throw e;
+        }
+    }
+
+    private void configureSsl(Git git) {
+        git.getRepository().getConfig().setBoolean("http", null, "sslVerify", sslVerify);
+        try {
+            git.getRepository().getConfig().save();
+        } catch (IOException e) {
+            System.err.println("Failed to save git config: " + e.getMessage());
         }
     }
 
