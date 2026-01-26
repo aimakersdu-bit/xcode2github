@@ -109,13 +109,27 @@ public class GitService {
             stream.forEach(p -> {
                 FileEntry entry = new FileEntry();
                 entry.setName(p.getFileName().toString());
-                entry.setPath(path.isEmpty() ? p.getFileName().toString() : path + "/" + p.getFileName().toString());
+                String entryPath = path.isEmpty() ? p.getFileName().toString() : path + "/" + p.getFileName().toString();
+                entry.setPath(entryPath);
                 entry.setType(Files.isDirectory(p) ? "dir" : "file");
                 entry.setSize(tryGetSize(p));
+                entry.setSha(calculateSha(entryPath));
                 entries.add(entry);
             });
         }
         return entries;
+    }
+
+    private String calculateSha(String path) {
+        try {
+            Path file = Path.of(localPath).resolve(path);
+            if (Files.exists(file)) {
+                return Integer.toHexString((path + Files.getLastModifiedTime(file).toString()).hashCode());
+            }
+        } catch (IOException e) {
+            // ignore
+        }
+        return Integer.toHexString(path.hashCode());
     }
 
     private long tryGetSize(Path p) {
@@ -131,6 +145,7 @@ public class GitService {
         private String path;
         private String type; // "file" or "dir"
         private long size;
+        private String sha;
 
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
@@ -140,5 +155,7 @@ public class GitService {
         public void setType(String type) { this.type = type; }
         public long getSize() { return size; }
         public void setSize(long size) { this.size = size; }
+        public String getSha() { return sha; }
+        public void setSha(String sha) { this.sha = sha; }
     }
 }

@@ -48,6 +48,7 @@ public class GitHubControllerTest {
         entry.setPath("src");
         entry.setType("dir");
         entry.setSize(0);
+        entry.setSha("hash");
 
         // For root path, the pattern match extraction results in empty string usually,
         // but let's test a sub-directory "src" to be safe and consistent with mock
@@ -58,6 +59,18 @@ public class GitHubControllerTest {
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
-                .andExpect(jsonPath("$[0].type").value("dir"));
+                .andExpect(jsonPath("$[0].type").value("dir"))
+                .andExpect(jsonPath("$[0].download_url").exists());
+    }
+
+    @Test
+    public void testGetRawContent() throws Exception {
+        String path = "README.md";
+        byte[] content = "Hello World".getBytes();
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        mockMvc.perform(get("/repos/ah/futian/raw/master/" + path))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().bytes(content));
     }
 }
