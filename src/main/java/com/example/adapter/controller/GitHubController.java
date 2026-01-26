@@ -104,6 +104,28 @@ public class GitHubController {
         }
     }
 
+    @GetMapping("/repos/{owner}/{repo}/raw/master/**")
+    public ResponseEntity<?> getRawContent(
+            @PathVariable String owner,
+            @PathVariable String repo,
+            HttpServletRequest request) {
+
+        ensureInitialized();
+
+        String path = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+        String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
+
+        try {
+            byte[] content = gitService.getFileContent(subPath);
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/octet-stream")
+                    .body(content);
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Not Found");
+        }
+    }
+
     // Helper to map directory entry
     private GitHubContent mapToGitHubContent(String owner, String repo, FileEntry entry) {
         GitHubContent content = new GitHubContent();
@@ -111,11 +133,15 @@ public class GitHubController {
         content.setPath(entry.getPath());
         content.setSize(entry.getSize());
         content.setType(entry.getType());
-        content.setSha("mock-sha");
+        content.setSha(entry.getSha());
         content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
         content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + entry.getPath());
-        content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath()); // Simplified
+        content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/" + entry.getSha());
+
+        // Use servlet builder to construct dynamic URL
+        org.springframework.web.servlet.support.ServletUriComponentsBuilder builder = org.springframework.web.servlet.support.ServletUriComponentsBuilder.fromCurrentContextPath();
+        String downloadUrl = builder.path("/repos/" + owner + "/" + repo + "/raw/master/" + entry.getPath()).toUriString();
+        content.setDownload_url(downloadUrl);
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
@@ -134,14 +160,18 @@ public class GitHubController {
         content.setPath(path);
         content.setSize(bytes.length);
         content.setType("file");
-        content.setSha("mock-sha");
+        String sha = Integer.toHexString(path.hashCode());
+        content.setSha(sha);
         content.setEncoding("base64");
         content.setContent(Base64.getEncoder().encodeToString(bytes));
 
         content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
         content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + path);
-        content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
+        content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/" + sha);
+
+        org.springframework.web.servlet.support.ServletUriComponentsBuilder builder = org.springframework.web.servlet.support.ServletUriComponentsBuilder.fromCurrentContextPath();
+        String downloadUrl = builder.path("/repos/" + owner + "/" + repo + "/raw/master/" + path).toUriString();
+        content.setDownload_url(downloadUrl);
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
