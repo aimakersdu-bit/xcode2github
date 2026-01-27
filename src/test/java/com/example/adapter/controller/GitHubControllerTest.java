@@ -14,8 +14,11 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.hamcrest.Matchers;
 
 @WebMvcTest(GitHubController.class)
 public class GitHubControllerTest {
@@ -38,7 +41,19 @@ public class GitHubControllerTest {
                 .andExpect(jsonPath("$.name").value("README.md"))
                 .andExpect(jsonPath("$.type").value("file"))
                 .andExpect(jsonPath("$.content").exists())
+                .andExpect(jsonPath("$.download_url").value(Matchers.endsWith("/repos/ah/futian/raw/master/" + path)))
                 .andExpect(jsonPath("$._links.self").exists());
+    }
+
+    @Test
+    public void testGetRawContent() throws Exception {
+        String path = "README.md";
+        byte[] content = "Hello World".getBytes();
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        mockMvc.perform(get("/repos/ah/futian/raw/master/" + path))
+                .andExpect(status().isOk())
+                .andExpect(content().bytes(content));
     }
 
     @Test
