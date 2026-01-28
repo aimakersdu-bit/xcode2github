@@ -3,6 +3,7 @@ package com.example.adapter.service;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.lib.StoredConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -10,10 +11,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
-import java.util.stream.Collectors;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class GitService {
@@ -38,6 +37,12 @@ public class GitService {
             try {
                 git = Git.open(repoDir);
                 System.out.println("Opened existing repository.");
+
+                // Ensure SSL verify is false
+                StoredConfig config = git.getRepository().getConfig();
+                config.setBoolean("http", null, "sslVerify", false);
+                config.save();
+
                 // Pull changes
                 git.pull()
                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
@@ -54,21 +59,40 @@ public class GitService {
         }
     }
 
-    private void cloneRepo(File repoDir) throws GitAPIException {
+    private void cloneRepo(File repoDir) {
         if (!repoDir.exists()) {
             repoDir.mkdirs();
         }
-        System.out.println("Cloning repository from " + repoUrl);
+        System.out.println("Initializing repository at " + repoDir.getAbsolutePath());
+
+        Git git = null;
         try {
-            git = Git.cloneRepository()
-                    .setURI(repoUrl)
-                    .setDirectory(repoDir)
-                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
-                    .call();
-            System.out.println("Repository cloned.");
-        } catch (GitAPIException e) {
-            System.err.println("Failed to clone repository: " + e.getMessage());
-            throw e;
+            git = Git.init().setDirectory(repoDir).call();
+            // Configure remote
+            StoredConfig config = git.getRepository().getConfig();
+            config.setString("remote", "origin", "url", repoUrl);
+            config.setString("remote", "origin", "fetch", "+refs/heads/*:refs/remotes/origin/*");
+            // Disable SSL verify
+            config.setBoolean("http", null, "sslVerify", false);
+            config.save();
+
+            System.out.println("Pulling from " + repoUrl);
+            git.pull()
+               .setRemote("origin")
+               .setRemoteBranchName("master")
+               .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
+               .call();
+
+            System.out.println("Repository initialized and pulled.");
+            this.git = git;
+        } catch (Exception e) {
+             System.err.println("Failed to init/pull repository: " + e.getMessage());
+             if (git != null) {
+                 git.close();
+             }
+             // Clean up
+             deleteDirectory(repoDir);
+             throw new RuntimeException("Failed to initialize repository", e);
         }
     }
 
