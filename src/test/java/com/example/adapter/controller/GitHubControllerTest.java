@@ -14,8 +14,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.springframework.http.MediaType;
 
 @WebMvcTest(GitHubController.class)
 public class GitHubControllerTest {
@@ -59,5 +65,28 @@ public class GitHubControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
                 .andExpect(jsonPath("$[0].type").value("dir"));
+    }
+
+    @Test
+    public void testDownloadUrlFormat() throws Exception {
+        String path = "README.md";
+        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
+        given(gitService.getFileContent(path)).willReturn("content".getBytes());
+
+        mockMvc.perform(get("/repos/ah/futian/contents/" + path))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.download_url", containsString("/raw/")))
+                .andExpect(jsonPath("$.download_url", not(containsString("/contents/"))));
+    }
+
+    @Test
+    public void testGetRawContent() throws Exception {
+        String path = "README.md";
+        given(gitService.getFileContent(path)).willReturn("raw content".getBytes());
+
+        mockMvc.perform(get("/repos/ah/futian/raw/master/" + path))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_OCTET_STREAM))
+                .andExpect(content().bytes("raw content".getBytes()));
     }
 }
