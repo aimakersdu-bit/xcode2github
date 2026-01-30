@@ -2,18 +2,19 @@ package com.example.adapter.service;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
-import java.util.stream.Collectors;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class GitService {
@@ -34,41 +35,55 @@ public class GitService {
 
     public void initRepo() throws IOException, GitAPIException {
         File repoDir = new File(localPath);
+        boolean isNew = false;
+
         if (repoDir.exists() && new File(repoDir, ".git").exists()) {
             try {
                 git = Git.open(repoDir);
                 System.out.println("Opened existing repository.");
-                // Pull changes
-                git.pull()
-                   .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
-                   .call();
-                System.out.println("Pulled latest changes.");
             } catch (Exception e) {
-                // If opening fails, maybe it's corrupted, delete and re-clone
-                System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
+                System.err.println("Failed to open existing repo, re-initializing: " + e.getMessage());
                 deleteDirectory(repoDir);
-                cloneRepo(repoDir);
+                isNew = true;
             }
         } else {
-            cloneRepo(repoDir);
+            isNew = true;
         }
-    }
 
-    private void cloneRepo(File repoDir) throws GitAPIException {
-        if (!repoDir.exists()) {
-            repoDir.mkdirs();
+        if (isNew) {
+            if (!repoDir.exists()) {
+                repoDir.mkdirs();
+            }
+            git = Git.init().setDirectory(repoDir).call();
+            System.out.println("Initialized new repository.");
         }
-        System.out.println("Cloning repository from " + repoUrl);
+
+        // Configure SSL Verify to false for all cases
+        StoredConfig config = git.getRepository().getConfig();
+        config.setBoolean("http", null, "sslVerify", false);
+        config.save();
+
+        // Ensure remote is set (if new)
+        if (isNew) {
+            try {
+                git.remoteAdd().setName("origin").setUri(new URIish(repoUrl)).call();
+            } catch (URISyntaxException e) {
+                throw new IOException("Invalid repo URL", e);
+            }
+        }
+
+        // Pull changes
         try {
-            git = Git.cloneRepository()
-                    .setURI(repoUrl)
-                    .setDirectory(repoDir)
-                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
-                    .call();
-            System.out.println("Repository cloned.");
-        } catch (GitAPIException e) {
-            System.err.println("Failed to clone repository: " + e.getMessage());
-            throw e;
+            System.out.println("Pulling latest changes from " + repoUrl);
+            git.pull()
+               .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
+               .call();
+            System.out.println("Pulled latest changes.");
+        } catch (Exception e) {
+            System.err.println("Failed to pull repository: " + e.getMessage());
+            // If it's a new repo and pull fails, it's critical.
+            // If existing, maybe just network issue, but we want to ensure we have data.
+            throw new IOException("Failed to pull repository", e);
         }
     }
 
