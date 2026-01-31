@@ -5,15 +5,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.io.IOException;
 import java.util.Collections;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -59,5 +62,28 @@ public class GitHubControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
                 .andExpect(jsonPath("$[0].type").value("dir"));
+    }
+
+    @Test
+    public void testGetFileDownloadUrl() throws Exception {
+        String path = "README.md";
+        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
+        given(gitService.getFileContent(path)).willReturn("Hello World".getBytes());
+
+        mockMvc.perform(get("/repos/ah/futian/contents/" + path))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.download_url").value(containsString("/repos/ah/futian/raw/master/" + path)));
+    }
+
+    @Test
+    public void testGetRawContent() throws Exception {
+        String path = "README.md";
+        byte[] content = "Hello World".getBytes();
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        mockMvc.perform(get("/repos/ah/futian/raw/master/" + path))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_OCTET_STREAM))
+                .andExpect(content().bytes(content));
     }
 }
