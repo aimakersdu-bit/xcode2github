@@ -14,8 +14,10 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import org.springframework.http.MediaType;
 
 @WebMvcTest(GitHubController.class)
 public class GitHubControllerTest {
@@ -38,6 +40,7 @@ public class GitHubControllerTest {
                 .andExpect(jsonPath("$.name").value("README.md"))
                 .andExpect(jsonPath("$.type").value("file"))
                 .andExpect(jsonPath("$.content").exists())
+                .andExpect(jsonPath("$.download_url").value("http://localhost:8080/repos/ah/futian/raw/master/README.md"))
                 .andExpect(jsonPath("$._links.self").exists());
     }
 
@@ -58,6 +61,48 @@ public class GitHubControllerTest {
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
-                .andExpect(jsonPath("$[0].type").value("dir"));
+                .andExpect(jsonPath("$[0].type").value("dir"))
+                .andExpect(jsonPath("$[0].download_url").isEmpty()); // Should be null
+    }
+
+    @Test
+    public void testGetRawContent() throws Exception {
+        String path = "src/main/java/App.java";
+        byte[] content = "public class App {}".getBytes();
+
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        mockMvc.perform(get("/repos/ah/futian/raw/master/" + path))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_OCTET_STREAM))
+                .andExpect(content().bytes(content));
+    }
+
+    @Test
+    public void testUrlEncoding() throws Exception {
+        String path = "folder/file with spaces.txt";
+        byte[] content = "content".getBytes();
+
+        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        mockMvc.perform(get("/repos/ah/futian/contents/" + path))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.url").value("http://localhost:8080/repos/ah/futian/contents/folder/file%20with%20spaces.txt"))
+                .andExpect(jsonPath("$.download_url").value("http://localhost:8080/repos/ah/futian/raw/master/folder/file%20with%20spaces.txt"));
+    }
+
+    @Test
+    public void testPlusSignFilename() throws Exception {
+        String path = "folder/foo+bar.txt";
+        byte[] content = "content".getBytes();
+
+        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        mockMvc.perform(get("/repos/ah/futian/contents/" + path))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("foo+bar.txt"))
+                .andExpect(jsonPath("$.path").value("folder/foo+bar.txt"));
     }
 }

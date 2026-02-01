@@ -6,6 +6,7 @@ import com.example.adapter.service.GitService;
 import com.example.adapter.service.GitService.FileEntry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.util.AntPathMatcher;
@@ -13,12 +14,16 @@ import org.springframework.web.servlet.HandlerMapping;
 import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
+
+import org.springframework.web.util.UriUtils;
 
 @RestController
 public class GitHubController {
@@ -50,11 +55,7 @@ public class GitHubController {
 
         ensureInitialized();
 
-        // Extract the full path after /contents/
-        String path = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
-        String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
-        String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
-
+        String subPath = extractPath(request);
         System.out.println("Requested content for path: " + subPath);
 
         try {
@@ -104,6 +105,29 @@ public class GitHubController {
         }
     }
 
+    @GetMapping("/repos/{owner}/{repo}/raw/{ref}/**")
+    public ResponseEntity<?> getRawContent(
+            @PathVariable String owner,
+            @PathVariable String repo,
+            @PathVariable String ref,
+            HttpServletRequest request) {
+
+        ensureInitialized();
+
+        String subPath = extractPath(request);
+
+        try {
+            byte[] contentBytes = gitService.getFileContent(subPath);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .body(contentBytes);
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     // Helper to map directory entry
     private GitHubContent mapToGitHubContent(String owner, String repo, FileEntry entry) {
         GitHubContent content = new GitHubContent();
@@ -112,10 +136,18 @@ public class GitHubController {
         content.setSize(entry.getSize());
         content.setType(entry.getType());
         content.setSha("mock-sha");
-        content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
-        content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + entry.getPath());
+
+        String encodedPath = encodePath(entry.getPath());
+
+        content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + encodedPath);
+        content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + encodedPath);
         content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath()); // Simplified
+
+        if ("dir".equals(entry.getType())) {
+            content.setDownload_url(null);
+        } else {
+            content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/raw/master/" + encodedPath);
+        }
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
@@ -138,10 +170,12 @@ public class GitHubController {
         content.setEncoding("base64");
         content.setContent(Base64.getEncoder().encodeToString(bytes));
 
-        content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
-        content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + path);
+        String encodedPath = encodePath(path);
+
+        content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + encodedPath);
+        content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + encodedPath);
         content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
+        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/raw/master/" + encodedPath);
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
@@ -150,6 +184,34 @@ public class GitHubController {
         content.set_links(links);
 
         return content;
+    }
+
+    private String extractPath(HttpServletRequest request) {
+        String path = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+        String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
+        try {
+            return UriUtils.decode(subPath, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return subPath;
+        }
+    }
+
+    private String encodePath(String path) {
+        try {
+            // Encode each segment separately to preserve slashes
+            String[] segments = path.split("/");
+            StringBuilder encoded = new StringBuilder();
+            for (int i = 0; i < segments.length; i++) {
+                encoded.append(URLEncoder.encode(segments[i], StandardCharsets.UTF_8).replace("+", "%20"));
+                if (i < segments.length - 1) {
+                    encoded.append("/");
+                }
+            }
+            return encoded.toString();
+        } catch (Exception e) {
+            return path;
+        }
     }
 
     @GetMapping("/user")
