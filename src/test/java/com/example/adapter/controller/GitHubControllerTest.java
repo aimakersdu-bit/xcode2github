@@ -14,6 +14,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -38,7 +39,34 @@ public class GitHubControllerTest {
                 .andExpect(jsonPath("$.name").value("README.md"))
                 .andExpect(jsonPath("$.type").value("file"))
                 .andExpect(jsonPath("$.content").exists())
+                .andExpect(jsonPath("$.download_url").value("http://localhost/repos/ah/futian/raw/master/" + path))
                 .andExpect(jsonPath("$._links.self").exists());
+    }
+
+    @Test
+    public void testGetFileContentWithRef() throws Exception {
+        String path = "README.md";
+        String ref = "dev";
+        // listFiles should throw IOException to indicate it's not a directory
+        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
+        given(gitService.getFileContent(path)).willReturn("Hello World".getBytes());
+
+        mockMvc.perform(get("/repos/ah/futian/contents/" + path).param("ref", ref))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.download_url").value("http://localhost/repos/ah/futian/raw/" + ref + "/" + path));
+    }
+
+    @Test
+    public void testGetRawContent() throws Exception {
+        String path = "src/main/java/com/ezone/devops/ezcode/template/Test.java";
+        byte[] content = "public class Test {}".getBytes();
+
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        mockMvc.perform(get("/repos/ah/futian/raw/master/" + path))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM))
+                .andExpect(content().bytes(content));
     }
 
     @Test
