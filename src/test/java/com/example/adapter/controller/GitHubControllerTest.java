@@ -14,8 +14,10 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.containsString;
 
 @WebMvcTest(GitHubController.class)
 public class GitHubControllerTest {
@@ -38,6 +40,8 @@ public class GitHubControllerTest {
                 .andExpect(jsonPath("$.name").value("README.md"))
                 .andExpect(jsonPath("$.type").value("file"))
                 .andExpect(jsonPath("$.content").exists())
+                // Verify download_url structure matches /raw/{ref}/{path}
+                .andExpect(jsonPath("$.download_url").value(containsString("/repos/ah/futian/raw/master/" + path)))
                 .andExpect(jsonPath("$._links.self").exists());
     }
 
@@ -49,8 +53,6 @@ public class GitHubControllerTest {
         entry.setType("dir");
         entry.setSize(0);
 
-        // For root path, the pattern match extraction results in empty string usually,
-        // but let's test a sub-directory "src" to be safe and consistent with mock
         String path = "src";
 
         given(gitService.listFiles(path)).willReturn(Collections.singletonList(entry));
@@ -59,5 +61,18 @@ public class GitHubControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
                 .andExpect(jsonPath("$[0].type").value("dir"));
+    }
+
+    @Test
+    public void testRawContentEndpoint() throws Exception {
+        String path = "src/main/java/Main.java";
+        byte[] content = "public class Main {}".getBytes();
+
+        given(gitService.getFileContent(path)).willReturn(content);
+
+        // Test with ref 'master'
+        mockMvc.perform(get("/repos/ah/futian/raw/master/" + path))
+                .andExpect(status().isOk())
+                .andExpect(content().bytes(content));
     }
 }

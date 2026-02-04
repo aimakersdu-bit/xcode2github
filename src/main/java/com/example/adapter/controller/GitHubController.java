@@ -6,14 +6,15 @@ import com.example.adapter.service.GitService;
 import com.example.adapter.service.GitService.FileEntry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerMapping;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -46,6 +47,7 @@ public class GitHubController {
     public ResponseEntity<?> getContents(
             @PathVariable String owner,
             @PathVariable String repo,
+            @RequestParam(required = false, defaultValue = "master") String ref,
             HttpServletRequest request) {
 
         ensureInitialized();
@@ -55,35 +57,20 @@ public class GitHubController {
         String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
         String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
 
-        System.out.println("Requested content for path: " + subPath);
+        System.out.println("Requested content for path: " + subPath + " ref: " + ref);
 
         try {
-            // Check if it's a file or directory
-            // We use GitService to check.
-            // Note: Since we don't have a fast "isDir" without checking filesystem, we might need logic.
-            // But GitService.listDirectory throws if not dir.
-
-            // Try as directory first? Or check file system?
-            // The GitService works on local filesystem which is fast.
-
-            // But wait, subPath could be empty for root.
-
             boolean isDir = false;
             if (subPath.isEmpty()) {
                 isDir = true;
             } else {
-                // Check locally
-                // Ideally GitService should expose "getType"
-                // For now, I'll access the implementation detail or improve GitService
-                // Let's improve GitService by assuming we can check via it.
-                // But simply:
                  try {
                      List<FileEntry> entries = gitService.listFiles(subPath);
                      // It is a directory
                      List<GitHubContent> response = new ArrayList<>();
                      for (FileEntry entry : entries) {
                          if (entry.getName().equals(".git")) continue;
-                         response.add(mapToGitHubContent(owner, repo, entry));
+                         response.add(mapToGitHubContent(owner, repo, entry, ref));
                      }
                      return ResponseEntity.ok(response);
                  } catch (IOException e) {
@@ -93,7 +80,7 @@ public class GitHubController {
 
             // If not directory, try file
             byte[] contentBytes = gitService.getFileContent(subPath);
-            GitHubContent content = mapToGitHubContent(owner, repo, subPath, contentBytes);
+            GitHubContent content = mapToGitHubContent(owner, repo, subPath, contentBytes, ref);
             return ResponseEntity.ok(content);
 
         } catch (IOException e) {
@@ -104,18 +91,53 @@ public class GitHubController {
         }
     }
 
+    @GetMapping("/repos/{owner}/{repo}/raw/{ref}/**")
+    public ResponseEntity<?> getRawContent(
+            @PathVariable String owner,
+            @PathVariable String repo,
+            @PathVariable String ref,
+            HttpServletRequest request) {
+
+        ensureInitialized();
+
+        String path = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+        String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
+
+        System.out.println("Requested raw content for path: " + subPath + " ref: " + ref);
+
+        try {
+            byte[] contentBytes = gitService.getFileContent(subPath);
+            return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(contentBytes);
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     // Helper to map directory entry
-    private GitHubContent mapToGitHubContent(String owner, String repo, FileEntry entry) {
+    private GitHubContent mapToGitHubContent(String owner, String repo, FileEntry entry, String ref) {
         GitHubContent content = new GitHubContent();
         content.setName(entry.getName());
         content.setPath(entry.getPath());
         content.setSize(entry.getSize());
         content.setType(entry.getType());
         content.setSha("mock-sha");
-        content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
-        content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + entry.getPath());
-        content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath()); // Simplified
+
+        String baseUrl = ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
+
+        content.setUrl(baseUrl + "/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
+        content.setHtml_url(baseUrl + "/" + owner + "/" + repo + "/blob/" + ref + "/" + entry.getPath());
+        content.setGit_url(baseUrl + "/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
+
+        if ("file".equals(entry.getType())) {
+            content.setDownload_url(baseUrl + "/repos/" + owner + "/" + repo + "/raw/" + ref + "/" + entry.getPath());
+        } else {
+             content.setDownload_url(null);
+        }
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
@@ -127,7 +149,7 @@ public class GitHubController {
     }
 
     // Helper to map file content
-    private GitHubContent mapToGitHubContent(String owner, String repo, String path, byte[] bytes) {
+    private GitHubContent mapToGitHubContent(String owner, String repo, String path, byte[] bytes, String ref) {
         GitHubContent content = new GitHubContent();
         Path p = Path.of(path);
         content.setName(p.getFileName().toString());
@@ -138,10 +160,12 @@ public class GitHubController {
         content.setEncoding("base64");
         content.setContent(Base64.getEncoder().encodeToString(bytes));
 
-        content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
-        content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + path);
-        content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + path);
+        String baseUrl = ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
+
+        content.setUrl(baseUrl + "/repos/" + owner + "/" + repo + "/contents/" + path);
+        content.setHtml_url(baseUrl + "/" + owner + "/" + repo + "/blob/" + ref + "/" + path);
+        content.setGit_url(baseUrl + "/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
+        content.setDownload_url(baseUrl + "/repos/" + owner + "/" + repo + "/raw/" + ref + "/" + path);
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
@@ -171,7 +195,9 @@ public class GitHubController {
         master.setProtectedBranch(false);
         GitHubBranch.Commit commit = new GitHubBranch.Commit();
         commit.setSha("mock-sha");
-        commit.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/commits/mock-sha");
+
+        String baseUrl = ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
+        commit.setUrl(baseUrl + "/repos/" + owner + "/" + repo + "/commits/mock-sha");
         master.setCommit(commit);
 
         return ResponseEntity.ok(Collections.singletonList(master));
