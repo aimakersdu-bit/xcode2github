@@ -1,23 +1,25 @@
 package com.example.adapter.controller;
 
 import com.example.adapter.service.GitService;
+import com.example.adapter.util.GitHubContentFactory;
+import com.example.adapter.util.UrlBuilder;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.io.IOException;
 import java.util.Collections;
 
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(GitHubController.class)
+@Import({UrlBuilder.class, GitHubContentFactory.class})
 public class GitHubControllerTest {
 
     @Autowired
@@ -29,7 +31,6 @@ public class GitHubControllerTest {
     @Test
     public void testGetFileContent() throws Exception {
         String path = "README.md";
-        // listFiles should throw IOException to indicate it's not a directory
         given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
         given(gitService.getFileContent(path)).willReturn("Hello World".getBytes());
 
@@ -49,8 +50,6 @@ public class GitHubControllerTest {
         entry.setType("dir");
         entry.setSize(0);
 
-        // For root path, the pattern match extraction results in empty string usually,
-        // but let's test a sub-directory "src" to be safe and consistent with mock
         String path = "src";
 
         given(gitService.listFiles(path)).willReturn(Collections.singletonList(entry));
