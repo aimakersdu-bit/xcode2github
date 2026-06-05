@@ -11,17 +11,24 @@ It allows tools like `deepwiki-open` to interact with Ezone repositories as if t
 
 ## Configuration
 
-The application is configured via `src/main/resources/application.properties`:
+The application is configured via environment variables. **Do not hard-code credentials.**
 
-```properties
-server.port=8080
-ezone.repo.url=https://demo1.ezone.work/code/ah/futian.git
-ezone.repo.username=test02
-ezone.repo.password=test02123
-ezone.repo.local-path=/tmp/ezone-repo
+| Variable | Description | Default |
+|---|---|---|
+| `EZONE_REPO_URL` | Ezone repository HTTPS URL | `https://demo1.ezone.work/code/ah/futian.git` |
+| `EZONE_USERNAME` | Ezone username | *(required)* |
+| `EZONE_PASSWORD` | Ezone password or access token | *(required)* |
+| `EZONE_LOCAL_PATH` | Local clone path | `/tmp/ezone-repo` |
+| `ADAPTER_API_KEY` | API key for authenticating incoming requests | *(required)* |
+| `SERVER_PORT` | HTTP listen port | `8080` |
+
+Example:
+
+```bash
+export EZONE_USERNAME=myuser
+export EZONE_PASSWORD=mytoken
+export ADAPTER_API_KEY=$(openssl rand -hex 32)
 ```
-
-Update `ezone.repo.username` and `ezone.repo.password` with valid credentials if they change.
 
 ## Running the Application
 
@@ -45,4 +52,5 @@ The adapter exposes the following GitHub-compatible endpoints:
 
 ## Troubleshooting
 
-- **Authentication Failed**: If you see `InvalidCredentialsException` or "Please check username or password", ensure that the credentials in `application.properties` are correct and have access to the repository via Git over HTTPS. If 2FA is enabled on Ezone, you might need to use an Access Token instead of a password.
+- **Authentication Failed**: If you see `InvalidCredentialsException` or "Please check username or password", ensure that the `EZONE_USERNAME` and `EZONE_PASSWORD` environment variables are set correctly and the account has access to the repository via Git over HTTPS. If 2FA is enabled on Ezone, use an Access Token instead of a password.
+- **401 Unauthorized on API calls**: Ensure you pass a valid `Authorization: Bearer <token>` header matching the `ADAPTER_API_KEY` environment variable.

@@ -4,6 +4,8 @@ import com.example.adapter.model.GitHubBranch;
 import com.example.adapter.model.GitHubContent;
 import com.example.adapter.service.GitService;
 import com.example.adapter.service.GitService.FileEntry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,7 +15,6 @@ import org.springframework.web.servlet.HandlerMapping;
 import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -22,6 +23,8 @@ import java.util.List;
 
 @RestController
 public class GitHubController {
+
+    private static final Logger log = LoggerFactory.getLogger(GitHubController.class);
 
     @Autowired
     private GitService gitService;
@@ -35,8 +38,7 @@ public class GitHubController {
                 gitService.initRepo();
                 initialized = true;
             } catch (Exception e) {
-                // Log and continue, maybe retry later
-                System.err.println("Error initializing repo: " + e.getMessage());
+                log.error("Error initializing repo", e);
                 // In production, might want to return 503 Service Unavailable until initialized
             }
         }
@@ -55,7 +57,7 @@ public class GitHubController {
         String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
         String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
 
-        System.out.println("Requested content for path: " + subPath);
+        log.debug("Requested content for path: {}", subPath);
 
         try {
             // Check if it's a file or directory
@@ -99,8 +101,8 @@ public class GitHubController {
         } catch (IOException e) {
              return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Collections.singletonMap("message", "Not Found"));
         } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonMap("message", e.getMessage()));
+            log.error("Unexpected error serving path: {}", subPath, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonMap("message", "Internal server error"));
         }
     }
 

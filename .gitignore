@@ -3,3 +3,8 @@ target/
 .idea/
 *.iml
 .DS_Store
+
+# Never commit files containing secrets
+.env
+.env.*
+!.env.example
