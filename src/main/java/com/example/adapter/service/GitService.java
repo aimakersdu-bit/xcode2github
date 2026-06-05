@@ -10,8 +10,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
-import java.util.stream.Collectors;
 import java.util.List;
 import java.util.ArrayList;
 
@@ -82,12 +80,17 @@ public class GitService {
         file.delete();
     }
 
-    public byte[] getFileContent(String path) throws IOException {
+    private Path resolveAndValidate(String path) throws IOException {
         Path root = Path.of(localPath).normalize();
-        Path filePath = root.resolve(path).normalize();
-        if (!filePath.startsWith(root)) {
-             throw new IOException("Invalid path: " + path);
+        Path resolved = root.resolve(path).normalize();
+        if (!resolved.startsWith(root)) {
+            throw new IOException("Invalid path: " + path);
         }
+        return resolved;
+    }
+
+    public byte[] getFileContent(String path) throws IOException {
+        Path filePath = resolveAndValidate(path);
         if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
             throw new IOException("File not found: " + path);
         }
@@ -95,11 +98,7 @@ public class GitService {
     }
 
     public List<FileEntry> listFiles(String path) throws IOException {
-        Path root = Path.of(localPath).normalize();
-        Path dirPath = root.resolve(path).normalize();
-        if (!dirPath.startsWith(root)) {
-             throw new IOException("Invalid path: " + path);
-        }
+        Path dirPath = resolveAndValidate(path);
         if (!Files.exists(dirPath) || !Files.isDirectory(dirPath)) {
              throw new IOException("Directory not found: " + path);
         }
