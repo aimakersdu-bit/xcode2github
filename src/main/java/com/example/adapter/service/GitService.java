@@ -3,6 +3,8 @@ package com.example.adapter.service;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -17,6 +19,8 @@ import java.util.ArrayList;
 
 @Service
 public class GitService {
+
+    private static final Logger log = LoggerFactory.getLogger(GitService.class);
 
     @Value("${ezone.repo.url}")
     private String repoUrl;
@@ -37,15 +41,13 @@ public class GitService {
         if (repoDir.exists() && new File(repoDir, ".git").exists()) {
             try {
                 git = Git.open(repoDir);
-                System.out.println("Opened existing repository.");
-                // Pull changes
+                log.info("Opened existing repository.");
                 git.pull()
                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
                    .call();
-                System.out.println("Pulled latest changes.");
+                log.info("Pulled latest changes.");
             } catch (Exception e) {
-                // If opening fails, maybe it's corrupted, delete and re-clone
-                System.err.println("Failed to open/pull repo, re-cloning: " + e.getMessage());
+                log.warn("Failed to open/pull repo, re-cloning", e);
                 deleteDirectory(repoDir);
                 cloneRepo(repoDir);
             }
@@ -58,16 +60,16 @@ public class GitService {
         if (!repoDir.exists()) {
             repoDir.mkdirs();
         }
-        System.out.println("Cloning repository from " + repoUrl);
+        log.info("Cloning repository from {}", repoUrl);
         try {
             git = Git.cloneRepository()
                     .setURI(repoUrl)
                     .setDirectory(repoDir)
                     .setCredentialsProvider(new UsernamePasswordCredentialsProvider(username, password))
                     .call();
-            System.out.println("Repository cloned.");
+            log.info("Repository cloned.");
         } catch (GitAPIException e) {
-            System.err.println("Failed to clone repository: " + e.getMessage());
+            log.error("Failed to clone repository", e);
             throw e;
         }
     }
