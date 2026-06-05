@@ -1,9 +1,12 @@
 package com.example.adapter.controller;
 
+import com.example.adapter.exception.RepositoryNotInitializedException;
 import com.example.adapter.model.GitHubBranch;
 import com.example.adapter.model.GitHubContent;
 import com.example.adapter.service.GitService;
 import com.example.adapter.service.GitService.FileEntry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,7 +16,6 @@ import org.springframework.web.servlet.HandlerMapping;
 import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -23,21 +25,25 @@ import java.util.List;
 @RestController
 public class GitHubController {
 
+    private static final Logger log = LoggerFactory.getLogger(GitHubController.class);
+
     @Autowired
     private GitService gitService;
 
-    // Initialize the repo on startup or first request
     private boolean initialized = false;
+    private Exception lastInitError = null;
 
     private synchronized void ensureInitialized() {
         if (!initialized) {
             try {
                 gitService.initRepo();
                 initialized = true;
+                lastInitError = null;
             } catch (Exception e) {
-                // Log and continue, maybe retry later
-                System.err.println("Error initializing repo: " + e.getMessage());
-                // In production, might want to return 503 Service Unavailable until initialized
+                lastInitError = e;
+                log.error("Failed to initialize repository: {}", e.getMessage(), e);
+                throw new RepositoryNotInitializedException(
+                        "Repository initialization failed: " + e.getMessage(), e);
             }
         }
     }
@@ -50,61 +56,34 @@ public class GitHubController {
 
         ensureInitialized();
 
-        // Extract the full path after /contents/
         String path = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
         String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
         String subPath = new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
 
-        System.out.println("Requested content for path: " + subPath);
+        log.debug("Requested content for path: {}", subPath);
 
         try {
-            // Check if it's a file or directory
-            // We use GitService to check.
-            // Note: Since we don't have a fast "isDir" without checking filesystem, we might need logic.
-            // But GitService.listDirectory throws if not dir.
-
-            // Try as directory first? Or check file system?
-            // The GitService works on local filesystem which is fast.
-
-            // But wait, subPath could be empty for root.
-
-            boolean isDir = false;
-            if (subPath.isEmpty()) {
-                isDir = true;
-            } else {
-                // Check locally
-                // Ideally GitService should expose "getType"
-                // For now, I'll access the implementation detail or improve GitService
-                // Let's improve GitService by assuming we can check via it.
-                // But simply:
-                 try {
-                     List<FileEntry> entries = gitService.listFiles(subPath);
-                     // It is a directory
-                     List<GitHubContent> response = new ArrayList<>();
-                     for (FileEntry entry : entries) {
-                         if (entry.getName().equals(".git")) continue;
-                         response.add(mapToGitHubContent(owner, repo, entry));
-                     }
-                     return ResponseEntity.ok(response);
-                 } catch (IOException e) {
-                     // Not a directory, try as file
-                 }
+            if (subPath.isEmpty() || gitService.isDirectory(subPath)) {
+                List<FileEntry> entries = gitService.listFiles(subPath);
+                List<GitHubContent> response = new ArrayList<>();
+                for (FileEntry entry : entries) {
+                    if (entry.getName().equals(".git")) continue;
+                    response.add(mapToGitHubContent(owner, repo, entry));
+                }
+                return ResponseEntity.ok(response);
             }
 
-            // If not directory, try file
             byte[] contentBytes = gitService.getFileContent(subPath);
             GitHubContent content = mapToGitHubContent(owner, repo, subPath, contentBytes);
             return ResponseEntity.ok(content);
 
         } catch (IOException e) {
-             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Collections.singletonMap("message", "Not Found"));
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonMap("message", e.getMessage()));
+            log.warn("Content not found for path '{}': {}", subPath, e.getMessage());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Collections.singletonMap("message", "Not Found: " + e.getMessage()));
         }
     }
 
-    // Helper to map directory entry
     private GitHubContent mapToGitHubContent(String owner, String repo, FileEntry entry) {
         GitHubContent content = new GitHubContent();
         content.setName(entry.getName());
@@ -115,7 +94,7 @@ public class GitHubController {
         content.setUrl("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
         content.setHtml_url("http://localhost:8080/" + owner + "/" + repo + "/blob/master/" + entry.getPath());
         content.setGit_url("http://localhost:8080/repos/" + owner + "/" + repo + "/git/blobs/mock-sha");
-        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath()); // Simplified
+        content.setDownload_url("http://localhost:8080/repos/" + owner + "/" + repo + "/contents/" + entry.getPath());
 
         GitHubContent.Links links = new GitHubContent.Links();
         links.setSelf(content.getUrl());
@@ -126,7 +105,6 @@ public class GitHubController {
         return content;
     }
 
-    // Helper to map file content
     private GitHubContent mapToGitHubContent(String owner, String repo, String path, byte[] bytes) {
         GitHubContent content = new GitHubContent();
         Path p = Path.of(path);
@@ -154,13 +132,11 @@ public class GitHubController {
 
     @GetMapping("/user")
     public ResponseEntity<?> getUser() {
-        // Mock user response for deepwiki-open authentication checks
         return ResponseEntity.ok(Collections.singletonMap("login", "mock-user"));
     }
 
     @GetMapping("/repos/{owner}/{repo}")
     public ResponseEntity<?> getRepo(@PathVariable String owner, @PathVariable String repo) {
-        // Mock repo details
         return ResponseEntity.ok(Collections.singletonMap("default_branch", "master"));
     }
 

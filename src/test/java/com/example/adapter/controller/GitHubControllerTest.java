@@ -10,9 +10,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.io.IOException;
 import java.util.Collections;
 
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -29,8 +29,8 @@ public class GitHubControllerTest {
     @Test
     public void testGetFileContent() throws Exception {
         String path = "README.md";
-        // listFiles should throw IOException to indicate it's not a directory
-        given(gitService.listFiles(path)).willThrow(new IOException("Not a directory"));
+        doNothing().when(gitService).initRepo();
+        given(gitService.isDirectory(path)).willReturn(false);
         given(gitService.getFileContent(path)).willReturn("Hello World".getBytes());
 
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
@@ -49,15 +49,35 @@ public class GitHubControllerTest {
         entry.setType("dir");
         entry.setSize(0);
 
-        // For root path, the pattern match extraction results in empty string usually,
-        // but let's test a sub-directory "src" to be safe and consistent with mock
         String path = "src";
-
+        doNothing().when(gitService).initRepo();
+        given(gitService.isDirectory(path)).willReturn(true);
         given(gitService.listFiles(path)).willReturn(Collections.singletonList(entry));
 
         mockMvc.perform(get("/repos/ah/futian/contents/" + path))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("src"))
                 .andExpect(jsonPath("$[0].type").value("dir"));
+    }
+
+    @Test
+    public void testGetContentsReturns404ForMissingFile() throws Exception {
+        String path = "nonexistent.txt";
+        doNothing().when(gitService).initRepo();
+        given(gitService.isDirectory(path)).willReturn(false);
+        given(gitService.getFileContent(path)).willThrow(new IOException("File not found: " + path));
+
+        mockMvc.perform(get("/repos/ah/futian/contents/" + path))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").exists());
+    }
+
+    @Test
+    public void testGetContentsReturns503WhenRepoNotInitialized() throws Exception {
+        doThrow(new IOException("Connection refused")).when(gitService).initRepo();
+
+        mockMvc.perform(get("/repos/ah/futian/contents/README.md"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message").exists());
     }
 }
